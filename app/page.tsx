@@ -68,6 +68,22 @@ export default function Home() {
   const [filtroDataInicio, setFiltroDataInicio] = useState("");
   const [filtroDataFim, setFiltroDataFim] = useState("");
 
+  async function atualizarDespesasVencidas() {
+    const hoje = new Date().toISOString().split("T")[0];
+
+    const { error } = await supabase
+      .from("despesas")
+      .update({
+        status: "vencido",
+      })
+      .lt("vencimento", hoje)
+      .eq("status", "pendente");
+
+    if (error) {
+      console.log(error);
+    }
+  }
+
   async function carregarCondominios() {
     const { data, error } = await supabase
       .from("condominios")
@@ -98,6 +114,7 @@ export default function Home() {
   }
 
   async function carregarTudo() {
+    await atualizarDespesasVencidas();
     await carregarCondominios();
 
     const { data, error } = await supabase
@@ -188,6 +205,11 @@ export default function Home() {
       return;
     }
 
+    const hoje = new Date().toISOString().split("T")[0];
+
+    const statusFinal =
+      status === "pendente" && vencimento < hoje ? "vencido" : status;
+
     setSalvando(true);
 
     if (despesaEditandoId) {
@@ -199,7 +221,7 @@ export default function Home() {
           fornecedor,
           valor: Number(valor),
           vencimento,
-          status,
+          status: statusFinal,
         })
         .eq("id", despesaEditandoId);
 
@@ -221,7 +243,7 @@ export default function Home() {
             fornecedor,
             valor: Number(valor),
             vencimento,
-            status,
+            status: statusFinal,
           },
         ])
         .select()
