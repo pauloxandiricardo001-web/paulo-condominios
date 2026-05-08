@@ -13,6 +13,7 @@ import {
   FileText,
   Trash2,
   Filter,
+  ReceiptText,
 } from "lucide-react";
 
 import jsPDF from "jspdf";
@@ -42,6 +43,9 @@ interface Despesa {
   valor: number;
   vencimento: string;
   status: string;
+  tipo_pagamento?: string;
+  chave_pix?: string;
+  recorrente_mensal?: boolean;
   anexos?: Anexo[];
 }
 
@@ -60,6 +64,10 @@ export default function Home() {
   const [valor, setValor] = useState("");
   const [vencimento, setVencimento] = useState("");
   const [status, setStatus] = useState("pendente");
+  const [tipoPagamento, setTipoPagamento] = useState("pix");
+  const [chavePix, setChavePix] = useState("");
+  const [recorrenteMensal, setRecorrenteMensal] = useState(false);
+  const [quantidadeMeses, setQuantidadeMeses] = useState("12");
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [salvando, setSalvando] = useState(false);
 
@@ -73,9 +81,7 @@ export default function Home() {
 
     const { error } = await supabase
       .from("despesas")
-      .update({
-        status: "vencido",
-      })
+      .update({ status: "vencido" })
       .lt("vencimento", hoje)
       .eq("status", "pendente");
 
@@ -124,7 +130,7 @@ export default function Home() {
 
     if (error) {
       console.log(error);
-      alert("Erro ao carregar despesas.");
+      alert("Erro ao carregar despesas. Verifique se as novas colunas foram criadas no Supabase.");
       return;
     }
 
@@ -166,19 +172,31 @@ export default function Home() {
     await carregarCondominios();
   }
 
+  function limparNomeArquivo(nomeArquivo: string) {
+    return nomeArquivo
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9.\-_]/g, "-");
+  }
+
   async function enviarAnexo(despesaId: string) {
     if (!arquivo) return;
 
-    const extensao = arquivo.name.split(".").pop();
-    const caminho = `despesas/${despesaId}/${Date.now()}.${extensao}`;
+    const nomeSeguro = limparNomeArquivo(arquivo.name);
+    const caminho = `despesas/${despesaId}/${Date.now()}-${nomeSeguro}`;
 
     const { error: uploadError } = await supabase.storage
       .from("documentos")
-      .upload(caminho, arquivo);
+      .upload(caminho, arquivo, {
+        cacheControl: "3600",
+        upsert: false,
+      });
 
     if (uploadError) {
       console.log(uploadError);
-      alert("Despesa salva, mas houve erro ao enviar o anexo.");
+      alert(
+        "Despesa salva, mas houve erro ao enviar o anexo. Confira se o bucket 'documentos' está público e se as políticas do Storage foram criadas."
+      );
       return;
     }
 
@@ -199,20 +217,45 @@ export default function Home() {
     }
   }
 
+  function adicionarMeses(dataISO: string, meses: number) {
+    const [ano, mes, dia] = dataISO.split("-").map(Number);
+    const data = new Date(ano, mes - 1 + meses, dia);
+    const yyyy = data.getFullYear();
+    const mm = String(data.getMonth() + 1).padStart(2, "0");
+    const dd = String(data.getDate()).padStart(2, "0");
+
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  function calcularStatusFinal(statusEscolhido: string, dataVencimento: string) {
+    const hoje = new Date().toISOString().split("T")[0];
+
+    if (statusEscolhido === "pendente" && dataVencimento < hoje) {
+      return "vencido";
+    }
+
+    return statusEscolhido;
+  }
+
   async function salvarDespesa() {
     if (!condominioId || !descricao || !valor || !vencimento) {
       alert("Preencha condomínio, descrição, valor e vencimento.");
       return;
     }
 
-    const hoje = new Date().toISOString().split("T")[0];
+    if (tipoPagamento === "pix" && !chavePix) {
+      const continuar = window.confirm(
+        "Você selecionou PIX, mas não informou a chave PIX. Deseja salvar mesmo assim?"
+      );
 
-    const statusFinal =
-      status === "pendente" && vencimento < hoje ? "vencido" : status;
+      if (!continuar) return;
+    }
 
     setSalvando(true);
 
     if (despesaEditandoId) {
+      const statusFinal = calcularStatusFinal(status, vencimento);
+
       const { error } = await supabase
         .from("despesas")
         .update({
@@ -222,42 +265,57 @@ export default function Home() {
           valor: Number(valor),
           vencimento,
           status: statusFinal,
+          tipo_pagamento: tipoPagamento,
+          chave_pix: tipoPagamento === "pix" ? chavePix : "",
+          recorrente_mensal: recorrenteMensal,
         })
         .eq("id", despesaEditandoId);
 
       if (error) {
         console.log(error);
-        alert("Erro ao atualizar despesa.");
+        alert("Erro ao atualizar despesa. Verifique se as colunas de pagamento foram criadas no Supabase.");
         setSalvando(false);
         return;
       }
 
       await enviarAnexo(despesaEditandoId);
     } else {
+      const meses = recorrenteMensal
+        ? Math.max(1, Math.min(60, Number(quantidadeMeses) || 12))
+        : 1;
+
+      const novasDespesas = Array.from({ length: meses }).map((_, index) => {
+        const vencimentoMensal = adicionarMeses(vencimento, index);
+
+        return {
+          condominio_id: condominioId,
+          descricao: recorrenteMensal
+            ? `${descricao} - ${String(index + 1).padStart(2, "0")}/${String(meses).padStart(2, "0")}`
+            : descricao,
+          fornecedor,
+          valor: Number(valor),
+          vencimento: vencimentoMensal,
+          status: calcularStatusFinal(status, vencimentoMensal),
+          tipo_pagamento: tipoPagamento,
+          chave_pix: tipoPagamento === "pix" ? chavePix : "",
+          recorrente_mensal: recorrenteMensal,
+        };
+      });
+
       const { data, error } = await supabase
         .from("despesas")
-        .insert([
-          {
-            condominio_id: condominioId,
-            descricao,
-            fornecedor,
-            valor: Number(valor),
-            vencimento,
-            status: statusFinal,
-          },
-        ])
-        .select()
-        .single();
+        .insert(novasDespesas)
+        .select();
 
       if (error) {
         console.log(error);
-        alert("Erro ao salvar despesa.");
+        alert("Erro ao salvar despesa. Verifique se as colunas de pagamento foram criadas no Supabase.");
         setSalvando(false);
         return;
       }
 
-      if (data?.id) {
-        await enviarAnexo(data.id);
+      if (data?.[0]?.id) {
+        await enviarAnexo(data[0].id);
       }
     }
 
@@ -274,6 +332,9 @@ export default function Home() {
     setValor(String(despesa.valor || ""));
     setVencimento(despesa.vencimento || "");
     setStatus(despesa.status || "pendente");
+    setTipoPagamento(despesa.tipo_pagamento || "pix");
+    setChavePix(despesa.chave_pix || "");
+    setRecorrenteMensal(Boolean(despesa.recorrente_mensal));
     setArquivo(null);
 
     window.scrollTo({
@@ -290,15 +351,17 @@ export default function Home() {
     setValor("");
     setVencimento("");
     setStatus("pendente");
+    setTipoPagamento("pix");
+    setChavePix("");
+    setRecorrenteMensal(false);
+    setQuantidadeMeses("12");
     setArquivo(null);
   }
 
   async function alterarStatusRapido(id: string, novoStatus: string) {
     const { error } = await supabase
       .from("despesas")
-      .update({
-        status: novoStatus,
-      })
+      .update({ status: novoStatus })
       .eq("id", id);
 
     if (error) {
@@ -380,6 +443,15 @@ export default function Home() {
     });
   }
 
+  function formatarFormaPagamento(tipo?: string) {
+    if (tipo === "pix") return "PIX";
+    if (tipo === "boleto") return "Boleto";
+    if (tipo === "ted") return "TED";
+    if (tipo === "dinheiro") return "Dinheiro";
+
+    return "-";
+  }
+
   function gerarPDF() {
     const doc = new jsPDF();
 
@@ -400,6 +472,7 @@ export default function Home() {
       formatarMoeda(Number(despesa.valor)),
       despesa.vencimento,
       despesa.status,
+      formatarFormaPagamento(despesa.tipo_pagamento),
     ]);
 
     autoTable(doc, {
@@ -412,6 +485,7 @@ export default function Home() {
           "Valor",
           "Vencimento",
           "Status",
+          "Pagamento",
         ],
       ],
       body: linhas,
@@ -425,6 +499,47 @@ export default function Home() {
     doc.text(`Total Vencido: ${formatarMoeda(totalVencido)}`, 14, finalY + 20);
 
     doc.save("relatorio-financeiro-paulo-condominios.pdf");
+  }
+
+  function gerarRecibo(despesa: Despesa) {
+    const doc = new jsPDF();
+    const nomeCondominio = nomeDoCondominio(despesa.condominio_id);
+    const dataAtual = new Date().toLocaleDateString("pt-BR");
+
+    doc.setFontSize(18);
+    doc.text("RECIBO DE PAGAMENTO", 105, 20, { align: "center" });
+
+    doc.setFontSize(12);
+    doc.text(`Condomínio: ${nomeCondominio}`, 20, 40);
+    doc.text(
+      `Prestador/Fornecedor: ${despesa.fornecedor || "________________________"}`,
+      20,
+      50
+    );
+    doc.text(`Serviço/Descrição: ${despesa.descricao}`, 20, 60);
+    doc.text(`Valor: ${formatarMoeda(Number(despesa.valor))}`, 20, 70);
+    doc.text(`Forma de pagamento: ${formatarFormaPagamento(despesa.tipo_pagamento)}`, 20, 80);
+
+    if (despesa.tipo_pagamento === "pix") {
+      doc.text(`Chave PIX: ${despesa.chave_pix || "________________________"}`, 20, 90);
+    }
+
+    doc.text(`Data de emissão: ${dataAtual}`, 20, despesa.tipo_pagamento === "pix" ? 100 : 90);
+
+    doc.text(
+      `Declaro, para os devidos fins, que recebi do ${nomeCondominio} a importância de ${formatarMoeda(
+        Number(despesa.valor)
+      )}, referente ao serviço descrito acima, dando plena e geral quitação do valor recebido.`,
+      20,
+      115,
+      { maxWidth: 170 }
+    );
+
+    doc.text("________________________________________", 45, 160);
+    doc.text("Assinatura do Prestador de Serviço", 60, 168);
+    doc.text("CPF/CNPJ: ______________________________", 45, 185);
+
+    doc.save(`recibo-${despesa.descricao}.pdf`);
   }
 
   return (
@@ -610,6 +725,56 @@ export default function Home() {
               <option value="vencido">Vencido</option>
             </select>
 
+            <select
+              value={tipoPagamento}
+              onChange={(e) => setTipoPagamento(e.target.value)}
+              className="border rounded-xl p-3"
+            >
+              <option value="pix">PIX</option>
+              <option value="boleto">Boleto</option>
+              <option value="ted">TED</option>
+              <option value="dinheiro">Dinheiro</option>
+            </select>
+
+            {tipoPagamento === "pix" && (
+              <input
+                type="text"
+                placeholder="Chave PIX do recebedor"
+                value={chavePix}
+                onChange={(e) => setChavePix(e.target.value)}
+                className="border rounded-xl p-3 md:col-span-2"
+              />
+            )}
+
+            <div className="md:col-span-3 border rounded-xl p-4 bg-gray-50">
+              <label className="flex items-center gap-2 font-medium text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={recorrenteMensal}
+                  onChange={(e) => setRecorrenteMensal(e.target.checked)}
+                />
+                Despesa mensal recorrente
+              </label>
+
+              {recorrenteMensal && !despesaEditandoId && (
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <input
+                    type="number"
+                    min="1"
+                    max="60"
+                    placeholder="Quantidade de meses"
+                    value={quantidadeMeses}
+                    onChange={(e) => setQuantidadeMeses(e.target.value)}
+                    className="border rounded-xl p-3"
+                  />
+
+                  <p className="text-sm text-gray-500 md:col-span-2">
+                    Exemplo: se colocar 12, o sistema lançará esta despesa nos próximos 12 meses automaticamente.
+                  </p>
+                </div>
+              )}
+            </div>
+
             <div className="md:col-span-3">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Anexo opcional
@@ -652,6 +817,8 @@ export default function Home() {
                 ? "Salvando..."
                 : despesaEditandoId
                 ? "Atualizar Despesa"
+                : recorrenteMensal
+                ? "Salvar Despesa Mensal"
                 : "Salvar Despesa"}
             </button>
 
@@ -746,6 +913,7 @@ export default function Home() {
                   <th className="p-3">Valor</th>
                   <th className="p-3">Vencimento</th>
                   <th className="p-3">Status</th>
+                  <th className="p-3">Pagamento</th>
                   <th className="p-3">Anexos</th>
                   <th className="p-3">Ações</th>
                 </tr>
@@ -789,6 +957,15 @@ export default function Home() {
                     </td>
 
                     <td className="p-3">
+                      <div>{formatarFormaPagamento(despesa.tipo_pagamento)}</div>
+                      {despesa.tipo_pagamento === "pix" && despesa.chave_pix && (
+                        <div className="text-xs text-gray-500 max-w-48 break-all">
+                          Chave: {despesa.chave_pix}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="p-3">
                       {despesa.anexos && despesa.anexos.length > 0 ? (
                         <div className="flex flex-col gap-2">
                           {despesa.anexos.map((anexo) => (
@@ -810,6 +987,14 @@ export default function Home() {
 
                     <td className="p-3">
                       <div className="flex gap-2">
+                        <button
+                          onClick={() => gerarRecibo(despesa)}
+                          className="bg-purple-600 text-white px-3 py-2 rounded-xl flex items-center gap-2"
+                        >
+                          <ReceiptText size={16} />
+                          Recibo
+                        </button>
+
                         <button
                           onClick={() => editarDespesa(despesa)}
                           className="bg-blue-600 text-white px-3 py-2 rounded-xl flex items-center gap-2"
