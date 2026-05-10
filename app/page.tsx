@@ -50,6 +50,9 @@ interface Despesa {
 }
 
 export default function Home() {
+  const mesAtual = String(new Date().getMonth() + 1);
+  const anoAtual = String(new Date().getFullYear());
+
   const [condominios, setCondominios] = useState<Condominio[]>([]);
   const [despesas, setDespesas] = useState<Despesa[]>([]);
 
@@ -73,6 +76,8 @@ export default function Home() {
 
   const [filtroCondominio, setFiltroCondominio] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("");
+  const [filtroMes, setFiltroMes] = useState(mesAtual);
+  const [filtroAno, setFiltroAno] = useState(anoAtual);
   const [filtroDataInicio, setFiltroDataInicio] = useState("");
   const [filtroDataFim, setFiltroDataFim] = useState("");
 
@@ -402,6 +407,17 @@ export default function Home() {
   function limparFiltros() {
     setFiltroCondominio("");
     setFiltroStatus("");
+    setFiltroMes(mesAtual);
+    setFiltroAno(anoAtual);
+    setFiltroDataInicio("");
+    setFiltroDataFim("");
+  }
+
+  function mostrarTodasAsDespesas() {
+    setFiltroCondominio("");
+    setFiltroStatus("");
+    setFiltroMes("");
+    setFiltroAno("");
     setFiltroDataInicio("");
     setFiltroDataFim("");
   }
@@ -411,18 +427,46 @@ export default function Home() {
   }, []);
 
   const despesasFiltradas = despesas.filter((despesa) => {
+    const [anoDespesa, mesDespesa] = despesa.vencimento.split("-");
+
     const passaCondominio =
       !filtroCondominio || despesa.condominio_id === filtroCondominio;
 
     const passaStatus = !filtroStatus || despesa.status === filtroStatus;
+
+    const passaMes = !filtroMes || Number(mesDespesa) === Number(filtroMes);
+
+    const passaAno = !filtroAno || anoDespesa === filtroAno;
 
     const passaDataInicio =
       !filtroDataInicio || despesa.vencimento >= filtroDataInicio;
 
     const passaDataFim = !filtroDataFim || despesa.vencimento <= filtroDataFim;
 
-    return passaCondominio && passaStatus && passaDataInicio && passaDataFim;
+    return (
+      passaCondominio &&
+      passaStatus &&
+      passaMes &&
+      passaAno &&
+      passaDataInicio &&
+      passaDataFim
+    );
   });
+
+  const anosDisponiveis = Array.from(
+    new Set([
+      anoAtual,
+      ...despesas
+        .map((despesa) => despesa.vencimento?.split("-")[0])
+        .filter(Boolean),
+    ])
+  ).sort();
+
+  const nomeMesSelecionado = filtroMes
+    ? new Date(2026, Number(filtroMes) - 1, 1).toLocaleDateString("pt-BR", {
+        month: "long",
+      })
+    : "todos os meses";
 
   const totalPago = despesasFiltradas
     .filter((d) => d.status === "pago")
@@ -465,6 +509,12 @@ export default function Home() {
       30
     );
 
+    doc.text(
+      `Período: ${nomeMesSelecionado}${filtroAno ? `/${filtroAno}` : ""}`,
+      14,
+      37
+    );
+
     const linhas = despesasFiltradas.map((despesa) => [
       nomeDoCondominio(despesa.condominio_id),
       despesa.descricao,
@@ -476,7 +526,7 @@ export default function Home() {
     ]);
 
     autoTable(doc, {
-      startY: 40,
+      startY: 47,
       head: [
         [
           "Condomínio",
@@ -840,7 +890,7 @@ export default function Home() {
             Filtros de Despesas
           </h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
             <select
               value={filtroCondominio}
               onChange={(e) => setFiltroCondominio(e.target.value)}
@@ -856,6 +906,39 @@ export default function Home() {
             </select>
 
             <select
+              value={filtroMes}
+              onChange={(e) => setFiltroMes(e.target.value)}
+              className="border rounded-xl p-3"
+            >
+              <option value="">Todos os meses</option>
+              <option value="1">Janeiro</option>
+              <option value="2">Fevereiro</option>
+              <option value="3">Março</option>
+              <option value="4">Abril</option>
+              <option value="5">Maio</option>
+              <option value="6">Junho</option>
+              <option value="7">Julho</option>
+              <option value="8">Agosto</option>
+              <option value="9">Setembro</option>
+              <option value="10">Outubro</option>
+              <option value="11">Novembro</option>
+              <option value="12">Dezembro</option>
+            </select>
+
+            <select
+              value={filtroAno}
+              onChange={(e) => setFiltroAno(e.target.value)}
+              className="border rounded-xl p-3"
+            >
+              <option value="">Todos os anos</option>
+              {anosDisponiveis.map((ano) => (
+                <option key={ano} value={ano}>
+                  {ano}
+                </option>
+              ))}
+            </select>
+
+            <select
               value={filtroStatus}
               onChange={(e) => setFiltroStatus(e.target.value)}
               className="border rounded-xl p-3"
@@ -866,34 +949,54 @@ export default function Home() {
               <option value="vencido">Vencido</option>
             </select>
 
-            <input
-              type="date"
-              value={filtroDataInicio}
-              onChange={(e) => setFiltroDataInicio(e.target.value)}
-              className="border rounded-xl p-3"
-            />
-
-            <input
-              type="date"
-              value={filtroDataFim}
-              onChange={(e) => setFiltroDataFim(e.target.value)}
-              className="border rounded-xl p-3"
-            />
-
             <button
               onClick={limparFiltros}
               className="bg-gray-700 text-white rounded-xl p-3"
             >
-              Limpar filtros
+              Mês atual
+            </button>
+
+            <button
+              onClick={mostrarTodasAsDespesas}
+              className="bg-gray-500 text-white rounded-xl p-3"
+            >
+              Ver todas
             </button>
           </div>
+
+          <details className="mt-4">
+            <summary className="cursor-pointer text-sm text-gray-600">
+              Filtro avançado por intervalo de datas
+            </summary>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+              <input
+                type="date"
+                value={filtroDataInicio}
+                onChange={(e) => setFiltroDataInicio(e.target.value)}
+                className="border rounded-xl p-3"
+              />
+
+              <input
+                type="date"
+                value={filtroDataFim}
+                onChange={(e) => setFiltroDataFim(e.target.value)}
+                className="border rounded-xl p-3"
+              />
+            </div>
+          </details>
         </div>
 
         <div className="bg-white rounded-2xl shadow p-6 mt-8">
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold text-gray-800">
-              Despesas Cadastradas
-            </h2>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-800">
+                Despesas Cadastradas
+              </h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Exibindo: {nomeMesSelecionado}{filtroAno ? `/${filtroAno}` : ""}
+              </p>
+            </div>
 
             <button
               onClick={gerarPDF}
