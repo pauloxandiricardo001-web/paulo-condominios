@@ -14,6 +14,7 @@ import {
   Trash2,
   Filter,
   ReceiptText,
+  Search,
 } from "lucide-react";
 
 import jsPDF from "jspdf";
@@ -80,6 +81,8 @@ export default function Home() {
   const [filtroAno, setFiltroAno] = useState(anoAtual);
   const [filtroDataInicio, setFiltroDataInicio] = useState("");
   const [filtroDataFim, setFiltroDataFim] = useState("");
+  const [busca, setBusca] = useState("");
+  const [filtroSemana, setFiltroSemana] = useState(false);
 
   async function atualizarDespesasVencidas() {
     const hoje = new Date().toISOString().split("T")[0];
@@ -426,6 +429,14 @@ export default function Home() {
     carregarTudo();
   }, []);
 
+  const hoje = new Date();
+
+  const inicioSemana = new Date(hoje);
+  inicioSemana.setDate(hoje.getDate() - hoje.getDay());
+
+  const fimSemana = new Date(inicioSemana);
+  fimSemana.setDate(inicioSemana.getDate() + 6);
+
   const despesasFiltradas = despesas.filter((despesa) => {
     const [anoDespesa, mesDespesa] = despesa.vencimento.split("-");
 
@@ -443,13 +454,32 @@ export default function Home() {
 
     const passaDataFim = !filtroDataFim || despesa.vencimento <= filtroDataFim;
 
+    const textoBusca = `
+      ${despesa.descricao}
+      ${despesa.fornecedor}
+      ${despesa.valor}
+    `.toLowerCase();
+
+    const passaBusca = textoBusca.includes(busca.toLowerCase());
+
+    let passaSemana = true;
+
+    if (filtroSemana) {
+      const dataDespesa = new Date(despesa.vencimento);
+
+      passaSemana =
+        dataDespesa >= inicioSemana && dataDespesa <= fimSemana;
+    }
+
     return (
       passaCondominio &&
       passaStatus &&
       passaMes &&
       passaAno &&
       passaDataInicio &&
-      passaDataFim
+      passaDataFim &&
+      passaBusca &&
+      passaSemana
     );
   });
 
